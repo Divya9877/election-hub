@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Voter, Booth, Officer, Assignment, DashboardStats } from '@/types';
 import { mockVoters, mockBooths, mockOfficers, mockAssignments } from '@/data/mockData';
+import * as api from '@/services/api';
 import { v4 as uuidv4 } from 'uuid';
 
 interface VoterStore {
@@ -38,35 +39,86 @@ interface VoterStore {
 }
 
 export const useVoterStore = create<VoterStore>((set, get) => ({
-  voters: mockVoters,
-  booths: mockBooths,
-  officers: mockOfficers,
-  assignments: mockAssignments,
+  voters: [],
+  booths: [],
+  officers: [],
+  assignments: [],
 
   addVoter: (voterData) => {
+    // generate client-side vid then persist to backend
     const now = new Date().toISOString();
+    const generatedVid = `v-${uuidv4().slice(0, 8)}`;
     const newVoter: Voter = {
       ...voterData,
-      vid: `v-${uuidv4().slice(0, 8)}`,
+      vid: generatedVid,
       createdAt: now,
       updatedAt: now,
     };
+
+    // Optimistically update UI
     set((state) => ({ voters: [...state.voters, newVoter] }));
+
+    // Persist to backend
+    (async () => {
+      try {
+        await api.addVoter({
+          vid: newVoter.vid,
+          aadhar: newVoter.aadhar,
+          name: newVoter.name,
+          phone: newVoter.phone,
+          dob: newVoter.dob,
+          gender: newVoter.gender,
+          address: newVoter.address,
+        });
+      } catch (err) {
+        // rollback optimistic update on error
+        console.error('Failed to persist voter to backend:', err);
+        set((state) => ({ voters: state.voters.filter((v) => v.vid !== generatedVid) }));
+      }
+    })();
   },
 
   updateVoter: (vid, voterData) => {
+    // Optimistically update UI
     set((state) => ({
       voters: state.voters.map((v) =>
         v.vid === vid ? { ...v, ...voterData, updatedAt: new Date().toISOString() } : v
       ),
     }));
+
+    // Persist update to backend
+    (async () => {
+      try {
+        await api.updateVoter(vid, {
+          name: voterData.name as string,
+          phone: voterData.phone as string,
+          address: voterData.address as string,
+          status: (voterData.status as 'registered' | 'voted') || 'registered',
+        });
+      } catch (err) {
+        console.error('Failed to update voter on backend:', err);
+        // In case of error, a full refresh from server may be needed; keep UI state simple.
+      }
+    })();
   },
 
   deleteVoter: (vid) => {
+    // Optimistically remove
+    const prev = get();
     set((state) => ({
       voters: state.voters.filter((v) => v.vid !== vid),
       assignments: state.assignments.filter((a) => a.voterId !== vid),
     }));
+
+    (async () => {
+      try {
+        await api.deleteVoter(vid);
+      } catch (err) {
+        console.error('Failed to delete voter on backend:', err);
+        // rollback
+        set(() => ({ voters: prev.voters, assignments: prev.assignments }));
+      }
+    })();
   },
 
   markAsVoted: (vid) => {
@@ -92,65 +144,132 @@ export const useVoterStore = create<VoterStore>((set, get) => ({
 
   addBooth: (boothData) => {
     const now = new Date().toISOString();
+    const generatedBid = `b-${uuidv4().slice(0, 8)}`;
     const newBooth: Booth = {
       ...boothData,
-      bid: `b-${uuidv4().slice(0, 8)}`,
+      bid: generatedBid,
       assignedCount: 0,
       completedCount: 0,
       createdAt: now,
       updatedAt: now,
     };
+
+    // Optimistic UI update
     set((state) => ({ booths: [...state.booths, newBooth] }));
+
+    // Persist to backend
+    (async () => {
+      try {
+        await api.addBooth({ bid: newBooth.bid, location: newBooth.location, time: newBooth.time });
+      } catch (err) {
+        console.error('Failed to persist booth to backend:', err);
+        set((state) => ({ booths: state.booths.filter((b) => b.bid !== generatedBid) }));
+      }
+    })();
   },
 
   updateBooth: (bid, boothData) => {
+    // Optimistic update
     set((state) => ({
       booths: state.booths.map((b) =>
         b.bid === bid ? { ...b, ...boothData, updatedAt: new Date().toISOString() } : b
       ),
     }));
+
+    (async () => {
+      try {
+        await api.updateBooth(bid, { location: boothData.location as string, time: boothData.time as string });
+      } catch (err) {
+        console.error('Failed to update booth on backend:', err);
+      }
+    })();
   },
 
   deleteBooth: (bid) => {
+    const prev = get();
     set((state) => ({
       booths: state.booths.filter((b) => b.bid !== bid),
       assignments: state.assignments.filter((a) => a.boothId !== bid),
     }));
+
+    (async () => {
+      try {
+        await api.deleteBooth(bid);
+      } catch (err) {
+        console.error('Failed to delete booth on backend:', err);
+        set(() => ({ booths: prev.booths, assignments: prev.assignments }));
+      }
+    })();
   },
 
   addOfficer: (officerData) => {
     const now = new Date().toISOString();
+    const generatedOid = `o-${uuidv4().slice(0, 8)}`;
     const newOfficer: Officer = {
       ...officerData,
-      oid: `o-${uuidv4().slice(0, 8)}`,
+      oid: generatedOid,
       createdAt: now,
       updatedAt: now,
     };
+
+    // Optimistic update
     set((state) => ({ officers: [...state.officers, newOfficer] }));
+
+    (async () => {
+      try {
+        await api.addOfficer({ oid: newOfficer.oid, name: newOfficer.name, phone: newOfficer.phone });
+      } catch (err) {
+        console.error('Failed to persist officer to backend:', err);
+        set((state) => ({ officers: state.officers.filter((o) => o.oid !== generatedOid) }));
+      }
+    })();
   },
 
   updateOfficer: (oid, officerData) => {
+    // Optimistic update
     set((state) => ({
       officers: state.officers.map((o) =>
         o.oid === oid ? { ...o, ...officerData, updatedAt: new Date().toISOString() } : o
       ),
     }));
+
+    (async () => {
+      try {
+        await api.updateOfficer(oid, { name: officerData.name as string, phone: officerData.phone as string });
+      } catch (err) {
+        console.error('Failed to update officer on backend:', err);
+      }
+    })();
   },
 
   deleteOfficer: (oid) => {
+    const prev = get();
     set((state) => ({
       officers: state.officers.filter((o) => o.oid !== oid),
       assignments: state.assignments.filter((a) => a.officerId !== oid),
     }));
+
+    (async () => {
+      try {
+        await api.deleteOfficer(oid);
+      } catch (err) {
+        console.error('Failed to delete officer on backend:', err);
+        set(() => ({ officers: prev.officers, assignments: prev.assignments }));
+      }
+    })();
   },
 
   addAssignment: (assignmentData) => {
+    const generatedAssignmentId = `a-${uuidv4().slice(0, 8)}`;
     const newAssignment: Assignment = {
       ...assignmentData,
-      assignmentId: `a-${uuidv4().slice(0, 8)}`,
+      assignmentId: generatedAssignmentId,
       timestamp: new Date().toISOString(),
     };
-    
+
+    const prev = get();
+
+    // Optimistic update
     set((state) => ({
       assignments: [...state.assignments, newAssignment],
       booths: state.booths.map((b) =>
@@ -159,12 +278,28 @@ export const useVoterStore = create<VoterStore>((set, get) => ({
           : b
       ),
     }));
+
+    (async () => {
+      try {
+        await api.addAssignment({
+          assignmentId: newAssignment.assignmentId,
+          voterId: newAssignment.voterId,
+          boothId: newAssignment.boothId,
+          officerId: newAssignment.officerId,
+        });
+      } catch (err) {
+        console.error('Failed to persist assignment to backend:', err);
+        // rollback
+        set(() => ({ assignments: prev.assignments, booths: prev.booths }));
+      }
+    })();
   },
 
   deleteAssignment: (assignmentId) => {
-    const { assignments, booths } = get();
+    const prev = get();
+    const { assignments, booths } = prev;
     const assignment = assignments.find((a) => a.assignmentId === assignmentId);
-    
+
     set((state) => ({
       assignments: state.assignments.filter((a) => a.assignmentId !== assignmentId),
       booths: assignment
@@ -175,6 +310,15 @@ export const useVoterStore = create<VoterStore>((set, get) => ({
           )
         : state.booths,
     }));
+
+    (async () => {
+      try {
+        await api.deleteAssignment(assignmentId);
+      } catch (err) {
+        console.error('Failed to delete assignment on backend:', err);
+        set(() => ({ assignments: prev.assignments, booths: prev.booths }));
+      }
+    })();
   },
 
   getStats: () => {
